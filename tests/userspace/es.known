@@ -1,0 +1,20 @@
+retroarch ffmpeg
+RK3566-20260930 retroarch pcsx_rearmed32
+RK3566-20260930 hatarisa hatarisa
+SM8250-20261006 hatarisa hatarisa
+AdvanceMame AdvanceMame
+SM4450 drastic drastic-sa
+SM8250 drastic drastic-sa
+features core mednafen/snes
+features core mednafen/wsswan
+features core retroarch/2048
+features core retroarch/cannonball
+features core retroarch/gme
+features core retroarch/mame2016
+features core retroarch/mrboom
+features core retroarch/nekop2
+features core retroarch/nestopiaCV
+features core retroarch/panda3ds
+features core retroarch/play
+features duplicate core retroarch/play
+features core retroarch/tyrquake

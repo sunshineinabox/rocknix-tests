@@ -1,0 +1,419 @@
+name: Test
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Distribution PR number (leave empty to test ref)"
+        default: ""
+      ref:
+        description: "Branch, tag or commit to test"
+        default: next
+      base:
+        description: "Base branch (default: the PR's base, or next)"
+        default: ""
+      mode:
+        description: "auto, overlay or build"
+        default: auto
+      devices:
+        description: "Devices to test, space separated (default: all)"
+        default: ""
+      repository:
+        description: "Distribution repository"
+        default: ROCKNIX/distribution
+      nightly_repository:
+        description: "Repo to take the nightly build state from (build mode)"
+        default: ROCKNIX/distribution
+      runner:
+        description: "Runner for overlay jobs (ubuntu-24.04-arm or ubuntu-24.04)"
+        default: ubuntu-24.04-arm
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: test-${{ inputs.repository || 'ROCKNIX/distribution' }}-${{ inputs.pr || inputs.ref || 'next' }}-${{ inputs.runner || 'ubuntu-24.04-arm' }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TEST_REPO: distribution
+  DIST_REPO: ${{ inputs.repository || 'ROCKNIX/distribution' }}
+  DIST_REF: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || inputs.ref || 'next' }}
+  NIGHTLY_REPO: ${{ inputs.nightly_repository || 'ROCKNIX/distribution' }}
+  GH_TOKEN: ${{ secrets.DISTRIBUTION_TOKEN || github.token }}
+  ALL_DEVICES: H700 RK3326 RK3399 RK3566 RK3576 RK3588 S922X SM4450 SM6115 SM8250 SM8550 SM8650 SM8750
+  LINUX: linux-7.2
+
+jobs:
+  classify:
+    runs-on: ubuntu-24.04
+    outputs:
+      base: ${{ steps.mode.outputs.base }}
+      mode: ${{ steps.mode.outputs.mode }}
+      update: ${{ steps.mode.outputs.update }}
+      devices: ${{ steps.mode.outputs.devices }}
+    steps:
+      - name: "[1/3] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[2/3] Check out the distribution tree"
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.DIST_REPO }}
+          ref: ${{ env.DIST_REF }}
+          path: distribution
+          fetch-depth: 0
+
+      - name: "[3/3] Choose overlay or build"
+        id: mode
+        run: |
+          base="${{ inputs.base }}"
+          if [ -z "${base}" ] && [ -n "${{ inputs.pr }}" ]; then
+            base=$(gh pr view "${{ inputs.pr }}" --repo "${DIST_REPO}" --json baseRefName --jq .baseRefName)
+          fi
+          base=origin/${base:-next}
+          echo "base=${base}" >>"${GITHUB_OUTPUT}"
+          mode="${{ inputs.mode || 'auto' }}"
+          [ "${mode}" = auto ] && mode=$(python3 tests/lib/classify.py distribution "${base}")
+          echo "mode=${mode}" >>"${GITHUB_OUTPUT}"
+          if git -C distribution diff --name-only "$(git -C distribution merge-base "${base}" HEAD)" |
+             grep -qE '/bootloader/|/updateabl$|/busybox/|/glibc/|/util-linux/|/parted/'; then
+            echo "update=yes" >>"${GITHUB_OUTPUT}"
+          fi
+          devices="${{ inputs.devices }}"
+          [ "${{ github.event_name }}" != schedule ] || devices="${{ vars.SCHEDULED_DEVICES }}"
+          echo "devices=$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1].split()))' "${devices:-${ALL_DEVICES}}")" >>"${GITHUB_OUTPUT}"
+
+  lint:
+    needs: classify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "[1/3] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[2/3] Check out the distribution tree"
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.DIST_REPO }}
+          ref: ${{ env.DIST_REF }}
+          path: distribution
+          fetch-depth: 0
+
+      - name: "[3/3] Shellcheck the changed lines"
+        run: scripts/test lint "${{ needs.classify.outputs.base }}"
+
+  kernel:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "[1/3] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[2/3] Restore the test kernel"
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/rocknix-test
+          key: test-kernel-${{ env.LINUX }}-${{ hashFiles('tests/boot/virt-arm64.config', 'tests/docker/boot.Dockerfile', 'tests/lib/build_kernel.sh') }}
+
+      - name: "[3/3] Build the test kernel"
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSLO https://www.kernel.org/pub/linux/kernel/v7.x/${LINUX}.tar.xz
+          scripts/test kernel ${LINUX}.tar.xz
+          rm -f ${LINUX}.tar.xz
+
+  overlay:
+    name: overlay (${{ matrix.device }})
+    needs: [classify, kernel]
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.mode == 'overlay' }}
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ fromJSON(needs.classify.outputs.devices) }}
+    env:
+      DEVICE: ${{ matrix.device }}
+      BASE_REF: ${{ needs.classify.outputs.base }}
+    steps:
+      - name: "[1/12] Maximize build space"
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
+        with:
+          skip-components: docker-engine,gh-cli
+
+      - name: "[2/12] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[3/12] Check out the distribution tree"
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.DIST_REPO }}
+          ref: ${{ env.DIST_REF }}
+          path: distribution
+          fetch-depth: 0
+
+      - name: "[4/12] Enable arm64 containers"
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,amd64
+
+      - name: "[5/12] Load uinput for the input tests"
+        run: sudo modprobe uinput || true
+
+      - name: "[6/12] Prepare the newest nightly"
+        id: prepare
+        run: |
+          scripts/test fetch ${DEVICE} nightly nightly
+          scripts/test fetch ${DEVICE} nightly nightly img
+          tar=$(ls nightly/ROCKNIX-${DEVICE}.*.tar)
+          echo "IMAGE=$(basename "${tar%.tar}")" >>"${GITHUB_ENV}"
+          scripts/test prepare "${tar}" rocknix-rootfs:${DEVICE}
+          rm -f nightly/*.tar nightly/*.tar.sha256
+
+      - name: "[7/12] Userspace tests"
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        run: scripts/test run --overlay "${BASE_REF}" rocknix-rootfs:${DEVICE} | tee userspace.tap
+
+      - name: "[8/12] Update path tests"
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && needs.classify.outputs.update == 'yes' }}
+        run: |
+          scripts/test fetch ${DEVICE} old release
+          scripts/test prepare old/ROCKNIX-${DEVICE}.*.tar rocknix-rootfs:${DEVICE}-old
+          rm -rf old
+          scripts/test update --overlay "${BASE_REF}" rocknix-initramfs:${DEVICE}-old rocknix-rootfs:${DEVICE} | tee update.tap
+
+      - name: "[9/12] Restore the test kernel"
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/rocknix-test
+          key: test-kernel-${{ env.LINUX }}-${{ hashFiles('tests/boot/virt-arm64.config', 'tests/docker/boot.Dockerfile', 'tests/lib/build_kernel.sh') }}
+
+      - name: "[10/12] Boot the nightly image"
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        run: |
+          docker image rm -f rocknix-rootfs:${DEVICE} rocknix-rootfs:${DEVICE}-old >/dev/null 2>&1 || true
+          BOOT_LOG=boot.log scripts/test boot --display "$(ls nightly/ROCKNIX-${DEVICE}.*.img.gz | head -n 1)" | tee boot.tap
+
+      - name: "[11/12] Summarize"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -B tests/lib/summary.py job --device "${DEVICE}" --image "${IMAGE}" --artifact "results-${DEVICE}" \
+            --json "results-${DEVICE}.json" userspace=userspace.tap update=update.tap boot=boot.tap >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: "[12/12] Keep the results and logs"
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ matrix.device }}
+          path: |
+            results-*.json
+            *.tap
+            boot.log
+            boot.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build:
+    name: build (${{ matrix.device }})
+    needs: [classify, kernel]
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.mode == 'build' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ fromJSON(needs.classify.outputs.devices) }}
+    env:
+      PROJECT: ROCKNIX
+      DEVICE: ${{ matrix.device }}
+      ARCH: aarch64
+      JAVA_HOME: /usr
+      AUTOREMOVE: "yes"
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+      CCACHE_COMPRESS: 1
+      CCACHE_COMPRESSLEVEL: 6
+      CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+      BUILD_IMAGE: ghcr.io/rocknix/rocknix-build:latest
+      BASE_REF: ${{ needs.classify.outputs.base }}
+      CACHE_URL: https://github.com/${{ vars.CACHE_REPO || 'ROCKNIX/distribution-cache' }}/releases/download/ccache
+    steps:
+      - name: "[1/22] Maximize build space"
+        uses: justinthelaw/maximize-github-runner-space@v0.9.0
+        with:
+          skip-components: docker-engine,gh-cli
+
+      - name: "[2/22] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[3/22] Check out the distribution tree"
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.DIST_REPO }}
+          ref: ${{ env.DIST_REF }}
+          path: distribution
+          fetch-depth: 0
+
+      - name: "[4/22] Find the newest successful nightly"
+        run: |
+          run=$(gh run list --repo ${NIGHTLY_REPO} --workflow build-nightly.yml \
+            --branch next --status success --limit 1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')
+          echo "NIGHTLY_RUN=${run% *}" >>"${GITHUB_ENV}"
+          echo "Building on nightly run ${run% *} (${run#* })"
+
+      - name: "[5/22] Download the arm build state"
+        uses: actions/download-artifact@v8
+        with:
+          name: arm (${{ matrix.device }})
+          path: distribution
+          run-id: ${{ env.NIGHTLY_RUN }}
+          repository: ${{ env.NIGHTLY_REPO }}
+          github-token: ${{ env.GH_TOKEN }}
+
+      - name: "[6/22] Download the emu-libretro build state"
+        uses: actions/download-artifact@v8
+        with:
+          name: emu-libretro (${{ matrix.device }})
+          path: distribution
+          run-id: ${{ env.NIGHTLY_RUN }}
+          repository: ${{ env.NIGHTLY_REPO }}
+          github-token: ${{ env.GH_TOKEN }}
+
+      - name: "[7/22] Download the emu-standalone build state"
+        uses: actions/download-artifact@v8
+        with:
+          name: emu-standalone (${{ matrix.device }})
+          path: distribution
+          run-id: ${{ env.NIGHTLY_RUN }}
+          repository: ${{ env.NIGHTLY_REPO }}
+          github-token: ${{ env.GH_TOKEN }}
+
+      - name: "[8/22] Restore the build state"
+        working-directory: distribution
+        run: |
+          tar --zstd -xf build.arm.tar.zst && rm build.arm.tar.zst
+          cat build.emu-libretro.tar.part* | tar -xf - && rm build.emu-libretro.tar.part*
+          cat build.emu-standalone.tar.part* | tar --skip-old-files -xf - && rm build.emu-standalone.tar.part*
+
+      - name: "[9/22] Restore ccache"
+        working-directory: distribution
+        run: |
+          curl -fsSL "${CACHE_URL}/ccache-aarch64-${DEVICE}.tar" | tar -xf - || echo "No base ccache"
+          if git diff --name-only "$(git merge-base "${BASE_REF}" HEAD)" | grep -qE '/emulators/|/emulation/|/libretro/'; then
+            curl -fsSL "${CACHE_URL}/ccache-aarch64-${DEVICE}-emu-libretro.tar" | tar -xf - || echo "No emu-libretro ccache"
+            for part in aa ab ac ad ae; do
+              curl -fsSL "${CACHE_URL}/ccache-aarch64-${DEVICE}-emu-standalone.tar.part-${part}" || break
+            done | tar -xf - || echo "No emu-standalone ccache"
+          fi
+
+      - name: "[10/22] Pull the build image"
+        run: docker pull ${BUILD_IMAGE}
+
+      - name: "[11/22] Build"
+        id: build
+        working-directory: distribution
+        run: |
+          ./scripts/get_env >.env
+          { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} ${BUILD_IMAGE} \
+              bash -c "./scripts/build_distro"; echo $? >docker_exit_code; } |
+            tee output.log | grep -E --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+          exit $(<docker_exit_code)
+
+      - name: "[12/22] Archive the build log"
+        if: failure() && steps.build.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ matrix.device }}
+          path: |
+            distribution/output.log
+            distribution/build.ROCKNIX-${{ matrix.device }}.aarch64/.threads/logs/
+
+      - name: "[13/22] Free the build tree"
+        run: sudo rm -rf distribution/build.ROCKNIX-* distribution/sources
+
+      - name: "[14/22] Enable arm64 containers"
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: "[15/22] Load uinput for the input tests"
+        run: sudo modprobe uinput || true
+
+      - name: "[16/22] Prepare the built image"
+        run: |
+          tar=$(ls distribution/target/ROCKNIX-${DEVICE}.aarch64-*.tar)
+          echo "IMAGE=$(basename "${tar%.tar}")" >>"${GITHUB_ENV}"
+          scripts/test prepare "${tar}" rocknix-rootfs:${DEVICE}
+
+      - name: "[17/22] Userspace tests"
+        run: scripts/test run rocknix-rootfs:${DEVICE} | tee userspace.tap
+
+      - name: "[18/22] Update path tests"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          scripts/test fetch ${DEVICE} old release
+          scripts/test prepare old/ROCKNIX-${DEVICE}.*.tar rocknix-rootfs:${DEVICE}-old
+          rm -rf old
+          scripts/test update rocknix-initramfs:${DEVICE}-old rocknix-rootfs:${DEVICE} | tee update.tap
+
+      - name: "[19/22] Restore the test kernel"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/rocknix-test
+          key: test-kernel-${{ env.LINUX }}-${{ hashFiles('tests/boot/virt-arm64.config', 'tests/docker/boot.Dockerfile', 'tests/lib/build_kernel.sh') }}
+
+      - name: "[20/22] Boot test"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          docker image rm -f rocknix-rootfs:${DEVICE} rocknix-rootfs:${DEVICE}-old >/dev/null 2>&1 || true
+          BOOT_LOG=boot.log scripts/test boot --display "$(ls distribution/target/ROCKNIX-${DEVICE}.aarch64-*.img.gz | head -n 1)" | tee boot.tap
+
+      - name: "[21/22] Summarize"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -B tests/lib/summary.py job --device "${DEVICE}" --image "${IMAGE:-}" --artifact "results-${DEVICE}" \
+            --json "results-${DEVICE}.json" userspace=userspace.tap update=update.tap boot=boot.tap >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: "[22/22] Keep the image, results and logs"
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ matrix.device }}
+          path: |
+            results-*.json
+            *.tap
+            boot.log
+            boot.png
+            distribution/target/ROCKNIX-*.img.gz
+            distribution/target/ROCKNIX-*.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
+
+  report:
+    needs: [overlay, build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "[1/3] Check out the tests"
+        uses: actions/checkout@v6
+
+      - name: "[2/3] Collect the results"
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: results
+
+      - name: "[3/3] Summarize the run"
+        run: |
+          shopt -s nullglob
+          python3 -B tests/lib/summary.py report results/*/results-*.json >>"${GITHUB_STEP_SUMMARY}"

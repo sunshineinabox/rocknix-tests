@@ -1,0 +1,11 @@
+multi-user.target.wants/sixaxis@.service target ../sixaxis@.service has different name
+cups.socket:6: ListenStream= references a path below legacy directory /var/run/
+Command /usr/sbin/avahi-dnsconfd is not executable
+Command /opt/etc/init.d/rc.unslung is not executable
+Command /usr/lib/systemd/systemd-sysroot-fstab-check is not executable
+service syslog.service not loaded, socket cannot be started
+Command /usr/lib/systemd/systemd-growfs is not executable
+Command /usr/bin/video_sense is not executable
+Command /etc/rc.local is not executable
+Command /usr/lib/systemd/system-generators/systemd-fstab-generator is not executable
+cycle essway.service rocknix.target sway-touch.service volume-fixup.service

@@ -1,0 +1,15 @@
+start_portmaster.sh
+start_heroic_authenticate.sh
+start_heroic_play.sh
+start_heroic_play_gamescope.sh
+start_pico8.sh
+start_vita3k.sh
+start_amiberry.sh rom
+start_gzdoom.sh rom
+start_OpenBOR.sh rom
+start_scummvm.sh rom
+RK3566-20260930 start_duckstation.sh
+start_gmu.sh rom
+RK3566 start_melonds.sh
+RK3588 start_melonds.sh
+S922X start_melonds.sh

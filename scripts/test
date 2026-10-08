@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+set -e -o pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+TOOLS_IMAGE=rocknix-test-tools:$(cksum <"${ROOT}/tests/docker/tools.Dockerfile" | cut -d' ' -f1)
+BUILD_IMAGE=ghcr.io/rocknix/rocknix-build:latest
+BOOT_IMAGE=rocknix-test-boot:$(cksum <"${ROOT}/tests/docker/boot.Dockerfile" | cut -d' ' -f1)
+KERNEL_FRAGMENT=${ROOT}/tests/boot/virt-arm64.config
+CACHE=${XDG_CACHE_HOME:-${HOME}/.cache}/rocknix-test
+
+usage() {
+  cat <<EOF
+usage: scripts/test fetch <device> [dir] [nightly|release|<tag>] [tar|img]
+       scripts/test prepare <img.gz|img|tar|SYSTEM> [tag]
+       scripts/test run [--overlay <base ref>] <rootfs tag> [suite...]
+       scripts/test update [--overlay <base ref>] <old initramfs tag> <new rootfs tag> [suite...]
+       scripts/test kernel <linux-7.x.tar.xz>
+       scripts/test boot [--kernel <Image>] [--display] <img.gz|img>
+       scripts/test lint <base ref>|--all
+       scripts/test list
+
+TEST_REPO is the distribution checkout to test (default ../distribution).
+EOF
+  exit 1
+}
+
+die() { echo "scripts/test: $*" >&2; exit 1; }
+
+repo_dir() {
+  local dir=${TEST_REPO:-}
+  if [ -z "${dir}" ]; then
+    [ -d "${ROOT}/projects/ROCKNIX" ] && dir=${ROOT} || dir=${ROOT}/../distribution
+  fi
+  [ -d "${dir}/projects/ROCKNIX" ] || die "${dir} is not a distribution checkout, set TEST_REPO"
+  (cd "${dir}" && pwd)
+}
+
+tools_image() {
+  docker image inspect ${TOOLS_IMAGE} >/dev/null 2>&1 && return
+  docker build -q -t ${TOOLS_IMAGE} -f "${ROOT}/tests/docker/tools.Dockerfile" "${ROOT}/tests/docker" >/dev/null
+}
+
+boot_image() {
+  docker image inspect ${BOOT_IMAGE} >/dev/null 2>&1 && return
+  docker build -q -t ${BOOT_IMAGE} -f "${ROOT}/tests/docker/boot.Dockerfile" "${ROOT}/tests/docker" >/dev/null
+}
+
+abspath() {
+  echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+}
+
+kernel() {
+  [ -f "$1" ] || die "no such linux tarball: $1"
+  local tarball out
+  tarball=$(abspath "$1")
+  out=${CACHE}/Image-$(basename "${tarball%.tar*}")-$(cksum <"${KERNEL_FRAGMENT}" | cut -d' ' -f1)
+  if [ ! -f "${out}" ]; then
+    boot_image
+    mkdir -p "${CACHE}"
+    docker run --rm -v "${tarball}:/linux.tar:ro" -v "${ROOT}/tests:/tests:ro" -v "${CACHE}:/out" ${BOOT_IMAGE} \
+      bash /tests/lib/build_kernel.sh /linux.tar /tests/boot/virt-arm64.config "/out/$(basename "${out}")"
+  fi
+  echo "${out}"
+}
+
+boot() {
+  local kernel="" display="" image work vol rc=0 log=${BOOT_LOG:-/tmp/rocknix-boot.log}
+  while [ $# -gt 1 ]; do
+    case "$1" in
+      --kernel) kernel=$(abspath "$2"); shift 2 ;;
+      --display) display=--display; shift ;;
+      *) break ;;
+    esac
+  done
+  [ -n "$1" ] || usage
+  [ -f "$1" ] || die "no image $1"
+  image=$(abspath "$1")
+  [ -n "${kernel}" ] || kernel=$(ls -t "${CACHE}"/Image-* 2>/dev/null | head -n 1)
+  [ -f "${kernel}" ] || die "no test kernel, run scripts/test kernel <linux tarball> first"
+  tools_image
+  boot_image
+  work=$(mktemp -d)
+  vol=rocknix-test-boot-$$
+  docker volume create ${vol} >/dev/null
+  trap 'docker volume rm -f '"${vol}"' >/dev/null; rm -rf '"${work}" EXIT
+  docker run --rm -v "${image}:/in:ro" -v ${vol}:/work -v "${ROOT}/tests/lib:/t:ro" -v "${work}:/out" ${TOOLS_IMAGE} \
+    sh -c 'python3 /t/extract_system.py /in /work >/dev/null && python3 /t/extract_initramfs.py /work/KERNEL /out/initramfs.cpio'
+  docker run --rm -v "${image}:/in:ro" -v "${kernel}:/Image:ro" -v "${work}:/out" -v "${ROOT}/tests:/tests:ro" \
+    ${BOOT_IMAGE} python3 /tests/lib/boot.py --image /in --kernel /Image --initrd /out/initramfs.cpio \
+    --known /tests/boot/units.known --errors /tests/boot/errors.known --log /out/serial.log ${display} || rc=$?
+  cp "${work}/serial.log" "${log}" 2>/dev/null
+  echo "# serial log ${log}"
+  if [ -f "${work}/screen.png" ]; then
+    cp "${work}/screen.png" "${log%.log}.png"
+    echo "# screenshot ${log%.log}.png"
+  fi
+  return ${rc}
+}
+
+release_value() {
+  echo "$1" | sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p"
+}
+
+prepare() {
+  [ -f "$1" ] || die "no such image: $1"
+  local src dir vol release device version arch platform tag
+  dir=$(cd "$(dirname "$1")" && pwd)
+  src="${dir}/$(basename "$1")"
+  tools_image
+  vol=rocknix-test-work-$$
+  docker volume create ${vol} >/dev/null
+  trap "docker volume rm -f ${vol} >/dev/null" EXIT
+
+  release=$(docker run --rm -v "${src}:/in:ro" -v ${vol}:/work -v "${ROOT}/tests/lib:/t:ro" \
+    ${TOOLS_IMAGE} python3 /t/extract_system.py /in /work)
+  device=$(release_value "${release}" HW_DEVICE)
+  version=$(release_value "${release}" OS_VERSION)
+  arch=$(release_value "${release}" HW_ARCH)
+  case "${arch}" in
+    aarch64) platform=linux/arm64 ;;
+    x86_64) platform=linux/amd64 ;;
+    arm) platform=linux/arm/v7 ;;
+    *) die "unknown HW_ARCH: ${arch}" ;;
+  esac
+  tag=${2:-rocknix-rootfs:${device}-${version}}
+
+  docker run --rm -v ${vol}:/work ${TOOLS_IMAGE} \
+    sh -c 'unsquashfs -q -n -d /work/root /work/SYSTEM >&2 && tar -C /work/root -cf - .' |
+    docker import --platform ${platform} --change 'ENV HOME=/storage' - "${tag}" >/dev/null
+  echo "${tag}"
+
+  docker run --rm -v ${vol}:/work -v "${ROOT}/tests/lib:/t:ro" ${TOOLS_IMAGE} sh -c '
+    [ -f /work/KERNEL ] && python3 /t/extract_initramfs.py /work/KERNEL /work/initramfs.cpio &&
+    mkdir /work/init && cd /work/init && cpio -idmu --quiet </work/initramfs.cpio && tar -cf /work/init.tar .' ||
+    return 0
+  docker run --rm -v ${vol}:/work ${TOOLS_IMAGE} cat /work/init.tar |
+    docker import --platform ${platform} - "${tag/rocknix-rootfs/rocknix-initramfs}" >/dev/null
+  echo "${tag/rocknix-rootfs/rocknix-initramfs}"
+}
+
+fetch() {
+  [ -n "$1" ] || usage
+  local device=$1 dir=${2:-.} which=${3:-nightly} kind=${4:-tar} repo=ROCKNIX/distribution tag name
+  command -v gh >/dev/null || die "fetch needs the GitHub CLI"
+  case "${which}" in
+    nightly)
+      repo=ROCKNIX/distribution-nightly
+      tag=$(gh release list --repo ${repo} --limit 1 --json tagName --jq '.[0].tagName')
+      ;;
+    release) tag=$(gh release list --repo ${repo} --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName') ;;
+    *) tag=${which} ;;
+  esac
+  mkdir -p "${dir}"
+  if [ "${kind}" = img ]; then
+    name=$(gh release view "${tag}" --repo ${repo} --json assets --jq '.assets[].name' |
+      grep -E "^ROCKNIX-${device}\..*\.img\.gz$" | sort | head -n 1)
+    [ -n "${name}" ] || die "no ${device} image in ${repo} ${tag}"
+    gh release download "${tag}" --repo ${repo} --pattern "${name}" --pattern "${name}.sha256" --dir "${dir}" --clobber
+    (cd "${dir}" && { sha256sum -c "${name}.sha256" 2>/dev/null || shasum -a 256 -c "${name}.sha256"; })
+    return
+  fi
+  gh release download "${tag}" --repo ${repo} --pattern "ROCKNIX-${device}.*.tar*" --dir "${dir}" --clobber
+  (cd "${dir}" && for f in ROCKNIX-"${device}".*.tar.sha256; do
+    sha256sum -c "${f}" 2>/dev/null || shasum -a 256 -c "${f}"
+  done)
+}
+
+changed_packages() {
+  local repo=$1 f d base
+  base=$(git -C "${repo}" merge-base "$2" HEAD)
+  { git -C "${repo}" diff --name-only "${base}" -- packages projects
+    git -C "${repo}" ls-files --others --exclude-standard -- packages projects
+  } | while read -r f; do
+    d=$(dirname "${f}")
+    while [ "${d}" != "." ] && [ ! -f "${repo}/${d}/package.mk" ]; do d=$(dirname "${d}"); done
+    [ -f "${repo}/${d}/package.mk" ] && basename "${d}"
+  done | sort -u
+}
+
+stage_overlay() {
+  local tag=$1 repo=$2 base=$3 stage=$4 release packages
+  packages=$(changed_packages "${repo}" "${base}")
+  [ -n "${packages}" ] || return 0
+  release=$(docker run --rm "${tag}" cat /etc/os-release)
+  docker run --rm "${tag}" find / -xdev -type d -path '/[eu][ts][cr]*' >"${stage}.dirs"
+  docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" -e HOME=/tmp -e PROJECT=ROCKNIX \
+    -e DEVICE="$(release_value "${release}" HW_DEVICE)" -e ARCH="$(release_value "${release}" HW_ARCH)" \
+    -v "${repo}:/repo:ro" -v "${ROOT}/tests/lib:/t:ro" -v "${stage}:/stage" -v "${stage}.dirs:/dirs:ro" \
+    ${BUILD_IMAGE} bash /t/overlay.sh /stage ${packages} | sed 's/^/overlay: /' >&2
+}
+
+suites() {
+  local dir=$1 s
+  shift
+  if [ $# -eq 0 ]; then
+    for s in "${ROOT}/tests/${dir}"/*.sh; do echo "/tests/${dir}/$(basename "${s}")"; done
+  else
+    for s in "$@"; do echo "/tests/${dir}/${s%.sh}.sh"; done
+  fi
+}
+
+in_image() {
+  local tag=$1
+  shift
+  docker run --rm --network none -e TEST_FILTER \
+    --tmpfs /tmp:exec --tmpfs /run --tmpfs /var --tmpfs /storage:exec \
+    -v "${ROOT}/tests:/tests:ro" -v "${REPO_DIR}:/repo:ro" -v "${STAGE}:/overlay:ro" "${EXTRA[@]}" \
+    "${tag}" /bin/bash -c 'cp -a /overlay/. / 2>/dev/null; exec /bin/bash /tests/lib/runner.sh "$@"' runner "$@"
+}
+
+setup() {
+  BASE=""
+  if [ "$1" = "--overlay" ]; then BASE=$2; SHIFT=2; else SHIFT=0; fi
+  REPO_DIR=$(repo_dir)
+  STAGE=$(mktemp -d)
+  EXTRA=()
+  trap 'rm -rf "${STAGE}" "${STAGE}.dirs" "${STAGE}.old"' EXIT
+}
+
+run() {
+  setup "$@"
+  shift ${SHIFT}
+  [ -n "$1" ] || usage
+  local tag=$1
+  shift
+  docker image inspect "${tag}" >/dev/null 2>&1 || die "no rootfs image ${tag}, run prepare first"
+  [ -z "${BASE}" ] || stage_overlay "${tag}" "${REPO_DIR}" "${BASE}" "${STAGE}"
+  local plain="" privileged="" s rc=0
+  for s in $(suites userspace "$@"); do
+    if grep -qx '# privileged' "${ROOT}${s}"; then privileged="${privileged} ${s}"; else plain="${plain} ${s}"; fi
+  done
+  [ -z "${plain}" ] || in_image "${tag}" ${plain} || rc=$?
+  if [ -n "${privileged}" ]; then
+    EXTRA=(--privileged)
+    in_image "${tag}" ${privileged} || rc=$?
+  fi
+  return ${rc}
+}
+
+update() {
+  setup "$@"
+  shift ${SHIFT}
+  [ -n "$2" ] || usage
+  local old=$1 new=$2 cid
+  shift 2
+  for t in "${old}" "${new}"; do docker image inspect "${t}" >/dev/null 2>&1 || die "no image ${t}"; done
+  [ -z "${BASE}" ] || stage_overlay "${new}" "${REPO_DIR}" "${BASE}" "${STAGE}"
+  mkdir -p "${STAGE}.old"
+  cid=$(docker create "${old}" /usr/bin/busybox true)
+  docker export "${cid}" | tar -C "${STAGE}.old" -xf - --exclude 'dev/*' 2>/dev/null || true
+  docker rm "${cid}" >/dev/null
+  EXTRA=(--privileged -v "${STAGE}.old:/oldinit-src:ro")
+  in_image "${new}" $(suites update "$@")
+}
+
+lint() {
+  [ -n "$1" ] || usage
+  local repo base=$1 exclude d
+  repo=$(repo_dir)
+  [ "${base}" != "--all" ] || base=""
+  tools_image
+  LINT=$(mktemp -d)
+  trap 'rm -rf "${LINT}"' EXIT
+  python3 -B "${ROOT}/tests/lib/lint.py" files "${repo}" ${base} >"${LINT}/files"
+  exclude=$(python3 -B "${ROOT}/tests/lib/lint.py" exclude)
+  for d in bash busybox; do
+    awk -F'\t' -v d=${d} '$1 == d {print "/repo/" $2}' "${LINT}/files" | tr '\n' '\0' |
+      docker run --rm -i --network none -v "${repo}:/repo:ro" ${TOOLS_IMAGE} \
+        sh -c "xargs -0 -r shellcheck -s ${d} -S warning -e ${exclude} -f json1 || true" >"${LINT}/${d}.json"
+  done
+  python3 -B "${ROOT}/tests/lib/lint.py" report "${repo}" "$1" "${LINT}/bash.json" "${LINT}/busybox.json"
+}
+
+case "$1" in
+  fetch) shift; fetch "$@" ;;
+  prepare) shift; prepare "$@" ;;
+  run) shift; run "$@" ;;
+  update) shift; update "$@" ;;
+  kernel) shift; kernel "$@" ;;
+  boot) shift; boot "$@" ;;
+  lint) shift; lint "$@" ;;
+  list) docker image ls --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' rocknix-rootfs ;;
+  *) usage ;;
+esac

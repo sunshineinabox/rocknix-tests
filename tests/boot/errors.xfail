@@ -1,0 +1,13 @@
+batteryplus.service: awk: /storage/.config/system/configs/system.cfg: No such file or directory
+powerstate.service: /etc/profile.d/001-functions: line *: /storage/.config/system/configs/system.cfg: No such file or directory
+touchkeyboard.service: /etc/profile.d/001-functions: line *: /storage/.config/system/configs/system.cfg: No such file or directory
+rocknix-autostart.service: /usr/lib/autostart/quirks/platforms/*/modules.keep: line *: command not found
+rocknix-autostart.service: /usr/lib/autostart/quirks/platforms/*/03*-analog_leds: line *: [: ==: unary operator expected
+rocknix-autostart.service: cp: can't stat '/usr/share/weston/kiosk.ini': No such file or directory
+rocknix-autostart.service: sed: /storage/.config/weston.ini: No such file or directory
+rocknix-autostart.service: hexdump: /sys/class/drm/card0-DP-1/edid: No such file or directory
+rocknix-autostart.service: ln: /storage/cache/.cores: No such file or directory
+rocknix-autostart.service: rm: can't remove '*/start.games': No such file or directory
+rocknix-autostart.service: mount: mounting /usr/lib*/mali/libMaliOpenCL.so.1 on /usr/lib*/libMaliOpenCL.so.1 failed*
+sway-touch.service: /usr/bin/sway-touch.sh: line *: [: =: unary operator expected
+rocknix-autostart.service: /usr/lib/autostart/common/050-audio: line *: /usr/sbin/quantum: No such file or directory
