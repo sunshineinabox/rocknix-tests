@@ -26,9 +26,17 @@ for PKG in "$@"; do
     die() { echo "$1" >&2; }
     INSTALL=${STAGE}
     PKG_BUILD=/nonexistent
+    dirs=()
     for dir in "${PKG_DIR}" "${PROJECT_DIR}/${PROJECT}/packages/${PKG_NAME}" \
       "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/packages/${PKG_NAME}"; do
-      [ -d "${dir}" ] || continue
+      [ -d "${dir}" ] && dirs+=("${dir}")
+    done
+    units=$(for dir in "${dirs[@]}"; do ls "${dir}/system.d" 2>/dev/null; done | grep -E '\.(service|socket|timer|path)$')
+    if [ -n "${units}" ] && [ -f /units ] && ! grep -qxF -f <(echo "${units}") /units; then
+      echo "${PKG} (not in this image, skipped)"
+      exit 0
+    fi
+    for dir in "${dirs[@]}"; do
       copy_dir "${dir}" profile.d etc/profile.d '*'
       copy_dir "${dir}" tmpfiles.d usr/lib/tmpfiles.d '*.conf'
       copy_dir "${dir}" autostart usr/lib/autostart/common '*'
