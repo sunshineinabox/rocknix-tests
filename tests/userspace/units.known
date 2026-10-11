@@ -9,3 +9,4 @@ Command /usr/bin/video_sense is not executable
 Command /etc/rc.local is not executable
 Command /usr/lib/systemd/system-generators/systemd-fstab-generator is not executable
 cycle essway.service rocknix.target sway-touch.service volume-fixup.service
+ap6611s-bluetooth.service:11: Support for option SysVStartPriority= has been removed and it is ignored

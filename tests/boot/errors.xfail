@@ -11,3 +11,4 @@ rocknix-autostart.service: rm: can't remove '*/start.games': No such file or dir
 rocknix-autostart.service: mount: mounting /usr/lib*/mali/libMaliOpenCL.so.1 on /usr/lib*/libMaliOpenCL.so.1 failed*
 sway-touch.service: /usr/bin/sway-touch.sh: line *: [: =: unary operator expected
 rocknix-autostart.service: /usr/lib/autostart/common/050-audio: line *: /usr/sbin/quantum: No such file or directory
+batteryplus.service: /etc/profile.d/001-functions: line *: /storage/.config/system/configs/system.cfg: No such file or directory

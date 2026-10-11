@@ -197,3 +197,5 @@
 /usr/share/aethersx2-sa/aethersx2 libcurl.so.4 CURL_OPENSSL_4
 ldconfig: /usr/lib/libcom_err.so.2 is not a symbolic link
 ldconfig: libraries libpcap.so.* in directory /usr/lib32 have same soname but different type.
+/usr/lib/weston/fullscreen-shell.so libexec_weston.so.0
+/usr/lib32/weston/fullscreen-shell.so libexec_weston.so.0

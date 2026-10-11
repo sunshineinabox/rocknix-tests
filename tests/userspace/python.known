@@ -88,3 +88,4 @@
 /usr/share/vulkan/registry/reg.py pyparsing
 /usr/share/vulkan/registry/vkconventions.py
 import readline
+/usr/bin/pydtc

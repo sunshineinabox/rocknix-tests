@@ -18,3 +18,6 @@ features core retroarch/panda3ds
 features core retroarch/play
 features duplicate core retroarch/play
 features core retroarch/tyrquake
+RK3588 nanoboyadvance nanoboyadvance-sa
+SM6115 nanoboyadvance nanoboyadvance-sa
+S922X retroarch gpsp

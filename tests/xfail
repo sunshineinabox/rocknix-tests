@@ -20,11 +20,10 @@ settings sort_settings_keeps_keys_set_setting_accepts
 settings rocknix_settings_write_value_with_slash
 settings chksysconfig_handles_nul_filled_config
 launchers launchers_gzdoom_wad_path_with_spaces
-input headphone_sense_boot_with_headphones
-input headphone_sense_mixer_control_name
-quirks autostart_quirks_first_boot
-quirks autostart_quirks_second_boot
-elf gconv_converts_common_charsets
+input headphone_sense_boot_with_headphones H700 RK3326 RK3576 RK3588 SM4450 SM6115 SM8250 SM8550 SM8650 SM8750 RK3566
+input headphone_sense_mixer_control_name H700 RK3326 RK3576 RK3588 SM4450 SM6115 SM8250 SM8550 SM8650 SM8750
+quirks autostart_quirks_first_boot H700 RK3566 SM6115 SM8250 SM8550 SM8650 SM8750
+quirks autostart_quirks_second_boot H700 RK3566 SM8550 SM8650 SM8750
 display hdmi_check_1080p_mode
 display hdmi_check_without_fb0
 display sway_config_display_mode_upside_down_panel
@@ -38,3 +37,7 @@ autostart networkservices_samba_state_file
 configs xml_configs_parse
 configs cwcheat_files_parse
 configs system_cfg_parses
+display sway_config_devices RK3588
+display sway_config_desktop_mode RK3588
+display sway_config_display_mode RK3588
+firstboot post_update_migrates_dolphin_profiles_once SM4450
