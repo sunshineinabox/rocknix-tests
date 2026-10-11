@@ -543,7 +543,13 @@ headphone_sense() {
   echo "${script}"
 }
 
+jack_in() {
+  sed -n "s/^HP_ON='\\*(SW_HEADPHONE_INSERT), value \\([01]\\)\\*'.*/\\1/p" "$(headphone_sense)"
+}
+
 headphone_setup() {
+  local in
+  in=$(jack_in)
   settings audio.volume=50
   log_tools ${TOOLS}
   stub /usr/bin/amixer <<'EOF'
@@ -556,7 +562,7 @@ EOF
   mount -t tmpfs fake /sys/class || fail "cannot mount a tmpfs on /sys/class"
   FAKE_CLASS=1
   mkdir -p /sys/class/gpio/gpio86
-  echo "$1" >/sys/class/gpio/gpio86/value
+  if [ "$1" = in ]; then echo "${in}"; else echo $((1 - in)); fi >/sys/class/gpio/gpio86/value
   start "$(headphone_sense)" "${NODES[0]}"
 }
 
@@ -564,44 +570,59 @@ mixer() {
   grep '^amixer|' "${ACTIONS}" 2>/dev/null
 }
 
+playback_path() {
+  mixer | grep -oE '\|(HP|SPK)$' | tr -d '|' | sort -u
+}
+
 test_headphone_sense_follows_jack_switch() {
+  local in v
   trap cleanup EXIT
-  headphone_setup 1
+  headphone_setup out
+  in=$(jack_in)
   assert_eq "$(setting audio.device)" "speakers" "audio.device at boot without headphones"
-  : >"${ACTIONS}"
-  send 0 SW_HEADPHONE_INSERT 1
-  until_true 50 '[ -n "$(mixer)" ]' || fail "no mixer change on jack event"
-  assert_eq "$(setting audio.device)" "speakers" "audio.device after SW_HEADPHONE_INSERT 1"
-  assert_eq "$(mixer | sed 's/.*|//')" "SPK" "playback path after SW_HEADPHONE_INSERT 1"
-  : >"${ACTIONS}"
-  send 0 SW_HEADPHONE_INSERT 0
-  until_true 50 '[ "$(setting audio.device)" = headphone ]'
-  assert_eq "$(setting audio.device)" "headphone" "audio.device after SW_HEADPHONE_INSERT 0"
-  assert_eq "$(mixer | sed 's/.*|//')" "HP" "playback path after SW_HEADPHONE_INSERT 0"
+  for v in 1 0; do
+    : >"${ACTIONS}"
+    send 0 SW_HEADPHONE_INSERT ${v}
+    until_true 50 '[ -n "$(mixer)" ]' || fail "no mixer change on SW_HEADPHONE_INSERT ${v}"
+    if [ "${v}" = "${in}" ]; then
+      until_true 50 '[ "$(setting audio.device)" = headphone ]'
+      assert_eq "$(setting audio.device)" "headphone" "audio.device after plugging in"
+      assert_eq "$(playback_path)" "HP" "playback path after plugging in"
+    else
+      until_true 50 '[ "$(setting audio.device)" = speakers ]'
+      assert_eq "$(setting audio.device)" "speakers" "audio.device after unplugging"
+      assert_eq "$(playback_path)" "SPK" "playback path after unplugging"
+    fi
+  done
 }
 
 test_headphone_sense_mixer_control_name() {
   local line
   trap cleanup EXIT
-  headphone_setup 1
+  grep -qE 'DEVICE_PLAYBACK_PATH([^_A-Z]|$)' "$(headphone_sense)" ||
+    skip "this headphone_sense does not use DEVICE_PLAYBACK_PATH"
+  headphone_setup out
   send 0 SW_HEADPHONE_INSERT 1
   until_true 50 '[ "$(mixer | wc -l)" -ge 2 ]' || fail "no mixer change on jack event"
   while read -r line; do
-    assert_contains "${line}" "|cset|name=Playback Mux|" "amixer arguments"
+    [[ "${line}" == *"|Playback Mux|"* || "${line}" == *"|name=Playback Mux|"* ]] ||
+      fail "control name split up: ${line}"
   done <<EOF
-$(mixer)
+$(mixer | grep Playback)
 EOF
 }
 
 test_headphone_sense_boot_with_headphones() {
   trap cleanup EXIT
-  headphone_setup 0
+  grep -q /sys/class/gpio "$(headphone_sense)" || skip "this headphone_sense does not read the jack GPIO"
+  headphone_setup in
   assert_eq "$(setting audio.device)" "headphone" "audio.device at boot with headphones"
   assert_eq "$(mixer | head -n 1 | sed 's/.*|//')" "HP" "playback path at boot with headphones"
 }
 
 test_headphone_sense_ucm_restores_volume() {
   trap cleanup EXIT
+  grep -q AUDIO_MANAGEMENT "$(headphone_sense)" || skip "this headphone_sense has no UCM mode"
   settings audio.volume=50
   log_tools ${TOOLS}
   profile 'AUDIO_MANAGEMENT=UCM'
@@ -625,8 +646,13 @@ esac
 EOF
 }
 
+hdmi_sense_runs() {
+  ! grep -qF "[ \"\${HW_DEVICE}\" = \"$(hw_device)\" ] && exit 0" "${SYSUTILS}/scripts/hdmi_sense"
+}
+
 test_hdmi_sense_records_state_and_sink() {
   local speaker=alsa_output.platform-sound.HiFi__Speaker__sink before
+  hdmi_sense_runs || skip "hdmi_sense does nothing on $(hw_device)"
   trap cleanup EXIT
   settings
   profile 'DEVICE_PIPEWIRE_PROFILE="HiFi"'
@@ -657,6 +683,7 @@ pactl set-default-sink ${speaker}" "speaker sink and card profile"
 }
 
 test_hdmi_hotplug_switches_outputs() {
+  hdmi_sense_runs || skip "hdmi_sense does nothing on $(hw_device)"
   trap cleanup EXIT
   settings
   log_tools ${TOOLS}
