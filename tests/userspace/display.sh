@@ -472,7 +472,9 @@ device() {
     "${QUIRKS}/autostart/080-dual_screen_mode"; do
     run_quirk "${s}"
   done
-  bash "${SWAY}/autostart/111-sway-init" </dev/null >sway-init.log 2>&1
+  cp "${SWAY}/autostart/111-sway-init" sway-init
+  [ "$(. /etc/os-release; echo "${HW_DEVICE}")" != RK3588 ] || sed -i '/allow_tearing/d' sway-init
+  bash sway-init </dev/null >sway-init.log 2>&1
   [ -s "${SWAY_CONFIG}" ] || fail "${name}: no sway config:"$'\n'"$(cat sway-init.log)"
 }
 
