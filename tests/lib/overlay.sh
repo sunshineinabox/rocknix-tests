@@ -12,6 +12,12 @@ for d in config scripts packages projects distributions tools; do
 done
 cd /tmp/tree
 
+copy_dir() {
+  [ -d "$1/$2" ] || return 0
+  mkdir -p "${STAGE}/$3"
+  cp -Pr "$1/$2"/$4 "${STAGE}/$3/" 2>/dev/null
+}
+
 for PKG in "$@"; do
   (
     . config/options "${PKG}" >/dev/null 2>&1 || exit 0
@@ -20,6 +26,25 @@ for PKG in "$@"; do
     die() { echo "$1" >&2; }
     INSTALL=${STAGE}
     PKG_BUILD=/nonexistent
+    for dir in "${PKG_DIR}" "${PROJECT_DIR}/${PROJECT}/packages/${PKG_NAME}" \
+      "${PROJECT_DIR}/${PROJECT}/devices/${DEVICE}/packages/${PKG_NAME}"; do
+      [ -d "${dir}" ] || continue
+      copy_dir "${dir}" profile.d etc/profile.d '*'
+      copy_dir "${dir}" tmpfiles.d usr/lib/tmpfiles.d '*.conf'
+      copy_dir "${dir}" autostart usr/lib/autostart/common '*'
+      copy_dir "${dir}" daemons usr/lib/autostart/daemons '*'
+      copy_dir "${dir}" system.d usr/lib/systemd/system '*.*'
+      copy_dir "${dir}" udev.d usr/lib/udev/rules.d '*.rules'
+      copy_dir "${dir}" hwdb.d usr/lib/udev/hwdb.d '*.hwdb'
+      copy_dir "${dir}" sleep.d usr/lib/systemd/system-sleep '*'
+      copy_dir "${dir}" sleep.d.serial usr/lib/systemd/system-sleep.serial '*'
+      copy_dir "${dir}" sysctl.d usr/lib/sysctl.d '*.conf'
+      copy_dir "${dir}" modules-load.d usr/lib/modules-load.d '*.conf'
+      copy_dir "${dir}" sysconf.d etc/sysconf.d '*.conf'
+      copy_dir "${dir}" debug.d usr/share/debugconf '*.conf'
+      copy_dir "${dir}" modprobe.d usr/lib/modprobe.d '*.conf'
+    done
+    chmod 0755 "${STAGE}"/usr/lib/autostart/common/* 2>/dev/null
     for f in pre_makeinstall_target makeinstall_target post_makeinstall_target post_install; do
       declare -F "${f}" >/dev/null && "${f}" >/dev/null 2>&1
     done
