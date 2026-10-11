@@ -476,24 +476,28 @@ EOF
 }
 
 test_memory_manager_auto_sizing() {
-  local kb tier zram swap resume
+  local kb tier swap resume mb
   trap 'umount /proc/meminfo; rm -rf /storage/.config' EXIT
   : >meminfo
   mount --bind "${PWD}/meminfo" /proc/meminfo || fail "cannot bind a fake /proc/meminfo"
-  while read -r kb tier zram swap resume; do
+  while read -r kb tier swap resume; do
+    mb=$((kb / 1024))
     meminfo "${kb}"
     swap_conf 'ZRAM_SIZE="Auto"' 'SWAP_FILE_SIZE="Auto"'
     assert_eq "$(bash "${SCRIPTS}/rocknix-memory-manager" --json </dev/null 2>/dev/null |
       jq -r '"\(.ram_total_mb) \(.tier_ram) \(.zram.size_mb) \(.swap.size_mb)"')" \
-      "$((kb / 1024)) ${tier} ${zram} ${swap}" "MemTotal ${kb} kB"
+      "${mb} ${tier} ${mb} ${swap}" "MemTotal ${kb} kB"
     assert_eq "$(bash "${SCRIPTS}/rocknix-memory-manager" --swap-size Resume --json </dev/null 2>/dev/null |
       jq -r .swap.size_mb)" "${resume}" "resume swap for MemTotal ${kb} kB"
+    swap_conf 'ZRAM_SIZE="50%"'
+    assert_eq "$(bash "${SCRIPTS}/rocknix-memory-manager" --json </dev/null 2>/dev/null | jq -r .zram.size_mb)" \
+      "$((mb / 2))" "zram at 50% for MemTotal ${kb} kB"
   done <<'EOF'
-1001772 low 733 978 1490
-1983616 low 1452 1937 2449
-3911852 mid 1910 2048 4332
-7834172 mid 3825 2048 8162
-11727148 high 6144 2048 11964
+1001772 low 978 1490
+1983616 low 1937 2449
+3911852 mid 2048 4332
+7834172 mid 2048 8162
+11727148 high 2048 11964
 EOF
 }
 
