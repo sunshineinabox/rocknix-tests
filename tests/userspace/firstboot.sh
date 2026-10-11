@@ -78,8 +78,9 @@ reset_fixture() {
 
 post_update_fixture() {
   populated_storage
-  trap 'unstub /usr/bin/ldconfig; wipe_storage' EXIT
+  trap 'unstub /usr/bin/ldconfig /usr/bin/factoryreset; wipe_storage' EXIT
   log_ldconfig
+  printf '#!/bin/sh\necho "factoryreset $*" >>/tmp/factoryreset.log\n' | stub /usr/bin/factoryreset
 }
 
 hw_id_present() {
@@ -222,7 +223,7 @@ test_post_update_resyncs_managed_configs() {
   echo user >>"/storage/.config/${module}"
   echo user >"/storage/.config/modules/My Tool.sh"
   touch /storage/.config/emulationstation/resources/logo.png
-  echo user >/storage/.config/melonDS/user.ini
+  [ -d /usr/config/melonDS ] && echo user >/storage/.config/melonDS/user.ini
   echo stray >/storage/.config/system/stray.cfg
   rm -rf /storage/.config/emulationstation/locale
   mkdir -p /storage/.config/emulationstation/locale/xx
@@ -239,8 +240,10 @@ test_post_update_resyncs_managed_configs() {
   cmp -s "/storage/.config/${module}" "/usr/config/${module}" || fail "${module} not refreshed"
   [ -f "/storage/.config/modules/My Tool.sh" ] || fail "user module removed"
   [ ! -e /storage/.config/emulationstation/resources/logo.png ] || fail "logo.png kept"
-  [ ! -e /storage/.config/melonDS/user.ini ] || fail "melonDS not replaced"
-  cmp -s /storage/.config/melonDS/melonDS.ini /usr/config/melonDS/melonDS.ini || fail "melonDS.ini not restored"
+  if [ -d /usr/config/melonDS ]; then
+    [ ! -e /storage/.config/melonDS/user.ini ] || fail "melonDS not replaced"
+    cmp -s /storage/.config/melonDS/melonDS.ini /usr/config/melonDS/melonDS.ini || fail "melonDS.ini not restored"
+  fi
   [ ! -e /storage/.config/system/stray.cfg ] || fail "stray file in /storage/.config/system kept"
   assert_eq "$(readlink /storage/.config/emulationstation/locale)" "/usr/share/locale" "ES locale"
 }
@@ -290,6 +293,7 @@ test_post_update_settings_migrations() {
 
 test_post_update_migrates_dolphin_profiles_once() {
   local d=/storage/.config/dolphin-emu f
+  [ -d /usr/config/dolphin-emu ] || skip "no Dolphin in this image"
   post_update_fixture
   printf '[Profile]\nDevice = evdev/0/Microsoft X-Box 360 pad\n' >"${d}/GamecubeControllerProfiles/GCPadNew.ini.south"
   echo legacy >"${d}/GamecubeControllerProfiles/GCPadNew.ini.east"
@@ -330,15 +334,16 @@ test_factoryreset_retroarch_full() {
   echo user >>/storage/.config/retroarch/retroarch.cfg
   mkdir -p /storage/.config/retroarch/config/snes
   echo override >/storage/.config/retroarch/config/snes/snes.cfg
-  echo user >/storage/.config/mednafen/mednafen.cfg
+  [ -d /usr/config/mednafen ] && echo user >/storage/.config/mednafen/mednafen.cfg
   bash "${FACTORYRESET}" retroarch-full
   assert_eq "$(tree_listing /storage/.config/retroarch)" "$(tree_listing /usr/config/retroarch)" "retroarch tree"
   cmp -s /storage/.config/retroarch/retroarch.cfg /usr/config/retroarch/retroarch.cfg || fail "retroarch.cfg not reset"
-  [ -f /storage/.config/mednafen/mednafen.cfg ] || fail "mednafen.cfg removed"
+  [ ! -d /usr/config/mednafen ] || [ -f /storage/.config/mednafen/mednafen.cfg ] || fail "mednafen.cfg removed"
   [ ! -e /tmp/power.log ] || fail "unexpected: $(cat /tmp/power.log)"
 }
 
 test_factoryreset_mednafen() {
+  [ -d /usr/config/mednafen ] || skip "no mednafen in this image"
   reset_fixture
   echo user >/storage/.config/mednafen/mednafen.cfg
   echo save >/storage/.config/mednafen/game.mcs
