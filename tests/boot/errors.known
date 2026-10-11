@@ -4,15 +4,15 @@ batteryledstatus.service: */bin/battery_led_status: line *: ((: * : arithmetic s
 fancontrol.service: */bin/fancontrol: line *: ((: > * : arithmetic syntax error: operand expected *
 powerstate.service: /usr/bin/powerstate: line *: ((: > * : arithmetic syntax error: operand expected *
 essway.service: cat: can't open '/sys/devices/soc0/serial_number': No such file or directory
-rocknix-autostart.service: */bin/ledcontrol: line *: /sys/devices/platform//multi-led*: No such file or directory
-rocknix-autostart.service: */055-thermal-trips: line *: /sys/devices/virtual/thermal/thermal_zone*: No such file or directory
-rocknix-autostart.service: */060-game_settings: line *: /sys/devices/platform/*.gpu/devfreq/*: No such file or directory
-rocknix-autostart.service: /usr/lib/autostart/common/095-turbo-mode: line *: /sys/devices/system/cpu/cpufreq/boost: Permission denied
-rocknix-autostart.service: awk: /sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors: No such file or directory
-rocknix-autostart.service: cat: can't open '/sys/class/drm/card/card*//status': No such file or directory
-rocknix-autostart.service: mkdir: can't create directory '/sys/kernel/config/usb_gadget/cdc': No such file or directory
-rocknix-autostart.service: /usr/bin/mkcontroller: line *: /tmp/*-*-*-*-*: No such file or directory
-rocknix-autostart.service: rm: can't remove '/tmp/*-*-*-*-*': No such file or directory
+*: */bin/ledcontrol: line *: /sys/devices/platform//multi-led*: No such file or directory
+*: */055-thermal-trips: line *: /sys/devices/virtual/thermal/thermal_zone*: No such file or directory
+*: */060-game_settings: line *: /sys/devices/platform/*.gpu/devfreq/*: No such file or directory
+*: /usr/lib/autostart/common/095-turbo-mode: line *: /sys/devices/system/cpu/cpufreq/boost: Permission denied
+*: awk: /sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors: No such file or directory
+*: cat: can't open '/sys/class/drm/card/card*//status': No such file or directory
+*: mkdir: can't create directory '/sys/kernel/config/usb_gadget/cdc': No such file or directory
+*: /usr/bin/mkcontroller: line *: /tmp/*-*-*-*-*: No such file or directory
+*: rm: can't remove '/tmp/*-*-*-*-*': No such file or directory
 *: ls: /sys/class/hwmon/hwmon*/pwm1: No such file or directory
-rocknix-autostart.service: /usr/lib/autostart/quirks/platforms/*/bin/gpu_*: line *: /sys/devices/platform/*/devfreq/*/max_freq: No such file or directory
-rocknix-autostart.service: /usr/lib/autostart/quirks/platforms/*/096-cpuidle: line *: /sys/devices/system/cpu/cpu*/cpuidle/*: No such file or directory
+*: /usr/lib/autostart/quirks/platforms/*/bin/gpu_*: line *: /sys/devices/platform/*/devfreq/*/max_freq: No such file or directory
+*: /usr/lib/autostart/quirks/platforms/*/096-cpuidle: line *: /sys/devices/system/cpu/cpu*/cpuidle/*: No such file or directory
