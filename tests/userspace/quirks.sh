@@ -152,7 +152,7 @@ boot() {
   bash -a -c '
     source /etc/profile >/dev/null 2>&1
     for script in "$@"; do
-      [ -f "${script}" ] || continue
+      [ -f "${script}" ] && [ "${script##*/}" != modules.keep ] || continue
       timeout 30 "${script}" 2>&1 >/dev/null </dev/null | sed "s|^|${script##*/}: |"
     done' autostart "${INSTALLED}/platforms/$(hw_device)"/* common/* >"$1" 2>&1
 }
