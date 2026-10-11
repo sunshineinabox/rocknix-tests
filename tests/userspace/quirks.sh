@@ -130,6 +130,11 @@ EOF
   pre=$(shell_errors pre.out)
   post=$(shell_errors post.out)
   [ -z "${pre}${post}" ] || fail "shell errors:"$'\n'"${pre}"$'\n'"${post}"
+  if [ "${hook}" != "${PACKAGES}/sysutils/sleep/sources/sleep.sh" ]; then
+    in_order pre.log "rocknix-games-freeze freeze"
+    in_order post.log "rocknix-games-freeze thaw"
+    return 0
+  fi
   in_order pre.log "rocknix-games-freeze freeze" "wifictl pin" "wifictl disable" "systemctl stop headphones" \
     "systemctl stop input" "systemctl stop bluetooth" "systemctl stop powerstate"
   for m in ${removed}; do in_order pre.log "systemctl stop powerstate" "modprobe -r ${m}" "quirk pre"; done
