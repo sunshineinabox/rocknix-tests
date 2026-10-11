@@ -40,7 +40,8 @@ an `EXIT` trap). Put `# privileged` on its own line if the suite needs to mount 
 Known problems are listed so they don't hide new ones:
 
 - `tests/xfail` lists tests that fail because of a real bug in the tree. They show up as expected
-  failures, and once the bug is fixed the runner says so.
+  failures, and once the bug is fixed the runner says so. Device names after the test limit a line
+  to those devices, e.g. `quirks autostart_quirks_first_boot SM8250 SM6115`.
 - `*.known` files list output a test may ignore, one line each.
 
 ## Update path

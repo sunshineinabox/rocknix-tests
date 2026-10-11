@@ -24,6 +24,21 @@ known_failure() {
   grep -qxF -- "$2" "$1" 2>/dev/null
 }
 
+expected_failure() {
+  local line devices
+  [ -n "${XFAIL_DEVICE}" ] || XFAIL_DEVICE=$(. /etc/os-release 2>/dev/null; echo "${HW_DEVICE}")
+  while read -r line; do
+    case "${line}" in
+      "$2") return 0 ;;
+      "$2 "*)
+        devices=" ${line#"$2" } "
+        [[ "${devices}" == *" ${XFAIL_DEVICE} "* ]] && return 0
+        ;;
+    esac
+  done <"$1"
+  return 1
+}
+
 STUBS=/.stubs
 
 stub() {
@@ -102,7 +117,7 @@ for SUITE in "$@"; do
       "${T}"
     ) >"${LOG}" 2>&1
     RC=$?
-    if [ ${RC} -ne ${SKIP_RC} ] && known_failure "${TESTS}/xfail" "${NAME} ${T#test_}"; then
+    if [ ${RC} -ne ${SKIP_RC} ] && expected_failure "${TESTS}/xfail" "${NAME} ${T#test_}"; then
       if [ ${RC} -eq 0 ]; then
         PASS=$((PASS + 1))
         echo "ok ${N} - ${NAME}: ${T#test_} # TODO passes on this image, listed in tests/xfail"
