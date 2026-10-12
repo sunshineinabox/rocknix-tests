@@ -218,7 +218,7 @@ setup() {
   REPO_DIR=$(repo_dir)
   STAGE=$(mktemp -d)
   EXTRA=()
-  trap 'rm -rf "${STAGE}" "${STAGE}.dirs" "${STAGE}.old"' EXIT
+  trap 'rm -rf "${STAGE}" "${STAGE}.dirs" "${STAGE}.units" "${STAGE}.old"' EXIT
 }
 
 run() {

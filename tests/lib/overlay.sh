@@ -5,8 +5,9 @@
 STAGE=$1
 shift
 
-mkdir -p /tmp/tree "${STAGE}"
-[ -f /dirs ] && (cd "${STAGE}" && sed 's#^/##' /dirs | xargs -d '\n' mkdir -p)
+mkdir -p /tmp/tree /tmp/skel /tmp/install "${STAGE}"
+[ -f /dirs ] && (cd /tmp/skel && sed 's#^/##' /dirs | xargs -d '\n' mkdir -p)
+cp -a /tmp/skel/. "${STAGE}/"
 for d in config scripts packages projects distributions tools; do
   [ -e "/repo/${d}" ] && cp -a "/repo/${d}" /tmp/tree/
 done
@@ -24,7 +25,7 @@ for PKG in "$@"; do
     set +e
     trap - ERR
     die() { echo "$1" >&2; }
-    INSTALL=${STAGE}
+    INSTALL=/tmp/install/${PKG_NAME}
     PKG_BUILD=/nonexistent
     dirs=()
     for dir in "${PKG_DIR}" "${PROJECT_DIR}/${PROJECT}/packages/${PKG_NAME}" \
@@ -36,6 +37,10 @@ for PKG in "$@"; do
       echo "${PKG} (not in this image, skipped)"
       exit 0
     fi
+    cp -a /tmp/skel "${INSTALL}"
+    for f in pre_makeinstall_target makeinstall_target post_makeinstall_target; do
+      declare -F "${f}" >/dev/null && "${f}" >/dev/null 2>&1
+    done
     for dir in "${dirs[@]}"; do
       copy_dir "${dir}" profile.d etc/profile.d '*'
       copy_dir "${dir}" tmpfiles.d usr/lib/tmpfiles.d '*.conf'
@@ -53,9 +58,9 @@ for PKG in "$@"; do
       copy_dir "${dir}" modprobe.d usr/lib/modprobe.d '*.conf'
     done
     chmod 0755 "${STAGE}"/usr/lib/autostart/common/* 2>/dev/null
-    for f in pre_makeinstall_target makeinstall_target post_makeinstall_target post_install; do
-      declare -F "${f}" >/dev/null && "${f}" >/dev/null 2>&1
-    done
+    cp -a "${INSTALL}/." "${STAGE}/"
+    INSTALL=${STAGE}
+    declare -F post_install >/dev/null && post_install >/dev/null 2>&1
     echo "${PKG}"
   )
 done
