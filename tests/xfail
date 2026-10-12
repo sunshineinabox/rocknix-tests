@@ -37,7 +37,4 @@ autostart networkservices_samba_state_file
 configs xml_configs_parse
 configs cwcheat_files_parse
 configs system_cfg_parses
-display sway_config_devices RK3588
-display sway_config_desktop_mode RK3588
-display sway_config_display_mode RK3588
 firstboot post_update_migrates_dolphin_profiles_once SM4450
