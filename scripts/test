@@ -186,11 +186,11 @@ stage_overlay() {
   [ -n "${packages}" ] || return 0
   release=$(docker run --rm "${tag}" cat /etc/os-release)
   docker run --rm "${tag}" find / -xdev -type d -path '/[eu][ts][cr]*' >"${stage}.dirs"
-  docker run --rm "${tag}" ls /usr/lib/systemd/system >"${stage}.units"
+  docker run --rm "${tag}" find /usr /etc -xdev ! -type d >"${stage}.files"
   docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" -e HOME=/tmp -e PROJECT=ROCKNIX \
     -e DEVICE="$(release_value "${release}" HW_DEVICE)" -e ARCH="$(release_value "${release}" HW_ARCH)" \
     -v "${repo}:/repo:ro" -v "${ROOT}/tests/lib:/t:ro" -v "${stage}:/stage" -v "${stage}.dirs:/dirs:ro" \
-    -v "${stage}.units:/units:ro" ${BUILD_IMAGE} bash /t/overlay.sh /stage ${packages} | sed 's/^/overlay: /' >&2
+    -v "${stage}.files:/files:ro" ${BUILD_IMAGE} bash /t/overlay.sh /stage ${packages} | sed 's/^/overlay: /' >&2
 }
 
 suites() {
@@ -218,7 +218,7 @@ setup() {
   REPO_DIR=$(repo_dir)
   STAGE=$(mktemp -d)
   EXTRA=()
-  trap 'rm -rf "${STAGE}" "${STAGE}.dirs" "${STAGE}.units" "${STAGE}.old"' EXIT
+  trap 'rm -rf "${STAGE}" "${STAGE}.dirs" "${STAGE}.files" "${STAGE}.old"' EXIT
 }
 
 run() {
